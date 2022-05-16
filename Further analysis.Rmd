@@ -1,0 +1,577 @@
+---
+title: "Analysis for rapport"
+author: "Martine Lind Jensen"
+date: "8/12/2021"
+output: pdf_document
+---
+```{r}
+pacman::p_load(tidyverse, lme4, lmerTest,emmeans, effects, ggthemes, simr, MuMIn)
+```
+
+```{r}
+df_read <- read_csv("CountEvent_data.csv")
+
+#Removing excess and not viaable data 
+#Which to remove, 3c3, da2g, 1bqr (from byg en bil, which were not facilitated)
+  #Which to collapse  
+    # w9n0, wpbh
+    # u6wz, h872
+    # 7jh, a3dk
+    # 88zp, 8ox6
+
+
+df <- df_read %>% 
+  filter(!ID %in% c("3c3","da2g", "1bqr")) %>% 
+  group_by(TierName, SessionNr) %>% 
+  mutate("Mean" = round(mean(CountEvent), digits = 0)) %>% 
+  filter(!ID %in% c("w9n0", "u6wz", "7jh", "88zp")) %>% 
+  mutate(PlayType = ifelse(ID == "h872", NA, PlayType)) %>% 
+  mutate(PlayType = ifelse(ID == "a3dk", NA, PlayType)) %>%
+  mutate(PlayType = ifelse(ID == "8ox6", NA, PlayType))%>% ungroup()
+
+
+#Dataframe for simulation
+df_sim <- df %>% select(Participant, ID, SessionNr, CountEvent, PlayType, Term, PilotData) %>% mutate(Participant= as.factor(Participant)) %>% drop_na()
+
+#Dataframe for plots
+df_plots_simple <- df %>% mutate(
+  Participants = as.factor(Participant), 
+  Participants = as.numeric(Participants), 
+  Participants = as.factor(Participants), 
+  PlayType = ifelse(PlayType == "Samarbejde", "Collaboration", "Rule-based")
+)
+
+df_plots_interaction <- df %>% mutate(
+  Participants = as.factor(Participant), 
+  Participants = as.numeric(Participants), 
+  Participants = as.factor(Participants), 
+  PlayType = ifelse(PlayType == "Samarbejde", "Collaboration", "Rule-based")
+) %>% drop_na(PlayType)
+```
+
+```{r}
+df_2 <- df %>% select(CountEvent, Mean)
+```
+
+
+```{r Describe the data}
+#Find the function to describe the data
+pastecs::stat.desc(df)
+
+#Distribution of samarbejde and spil 
+plyr::count(as.factor(df$PlayType))
+
+mean(df$CountEvent)
+var(df$CountEvent)
+  
+ages <- c(12, 9, 12, 13, 9, 9,11,11,11,9,11,11,9,9,9,9,9,12,9)
+
+sd(ages)
+
+```
+
+#Models 
+
+##Simple 
+```{r simple models}
+#FULL MODELS
+
+#Simple model
+p_full_simple <- glmer(
+  Mean ~ SessionNr + Term 
+  + (1|Participant),
+  family = poisson(link = "log"), 
+  df
+)
+
+  #Significant
+#With slopes
+p_full_simple_s <- glmer(
+  Mean ~ SessionNr + Term 
+  + (1+ SessionNr|Participant),
+  family = poisson(link = "log"), 
+  df
+)
+  #Introducing random slopes, gives non-significant results (this result is not robust)
+
+#Checking the random effect in 
+plot(ranef(p_full_simple))
+plot(ranef(p_full_simple_s))
+  #Reveals that the random slopes are not normally distributed
+  #Going with model without slopes
+
+#Calculating r squared
+#Null 
+p_null <- glmer(
+  Mean ~ 1 
+  + (1|Participant),
+  family = poisson(link = "log"), 
+  df
+)
+
+#calculating r squared without slopes
+r.squaredGLMM(p_full_simple, nullfx = p_null)
+```
+
+
+```{r simple models}
+#MST model 
+p_mst_simple <- glmer(
+  Mean ~ SessionNr 
+  + (1|Participant),
+  family = poisson(link = "log"), 
+  filter(df, Term == "MST")
+)
+  #No significance 
+
+#With random slopes 
+p_mst_simple_s <- glmer(
+  Mean ~ SessionNr 
+  + (1+SessionNr|Participant),
+  family = poisson(link = "log"), 
+  filter(df, Term == "MST")
+)
+
+#If checking the random effect in 
+plot(ranef(p_mst_simple))
+plot(ranef(p_mst_simple_s))
+  #Reveals that the random slopes are not normally distributed
+```
+
+
+```{r simple models}
+#GR model 
+p_gr_simple <- glmer(
+  CountEvent ~ SessionNr 
+  + (1|Participant),
+  family = poisson(link = "log"), 
+  filter(df, Term == "GR")
+)
+  #No significane
+
+p_gr_simple_s <- glmer(
+  CountEvent ~ SessionNr 
+  + (1+ SessionNr|Participant),
+  family = poisson(link = "log"), 
+  filter(df, Term == "GR")
+)
+
+#If checking the random effect in 
+plot(ranef(p_gr_simple))
+plot(ranef(p_gr_simple_s))
+  #Reveals that the random slopes are not normally distributed
+```
+
+```{r t test}
+lmer(CountEvent ~ 0+ PlayType +(1|Participant), df)
+?lmer
+```
+
+
+##Interaction models
+
+```{r interaction models}
+#Interaction model 
+p_full_int <- glmer(
+  CountEvent ~ SessionNr*PlayType + Term 
+  + (1|Participant),
+  family = poisson(link = "log"), 
+  df
+)
+
+p_full_int_s <- glmer(
+  CountEvent ~ SessionNr*PlayType + Term 
+  + (1+ SessionNr|Participant),
+  family = poisson(link = "log"), 
+  df
+)
+
+#If checking the random effect in 
+plot(ranef(p_full_int))
+plot(ranef(p_full_int_s))
+  #Reveals that the random slopes are not normally distributed
+
+
+#Calculating r squared
+r.squaredGLMM(p_full_int, nullfx = p_full_null)
+```
+
+
+```{r interaction models}
+#MST
+p_mst_int <- glmer(
+  CountEvent ~ SessionNr*PlayType 
+  + (1|Participant),
+  family = poisson(link = "log"), 
+  filter(df, Term == "MST"), 
+  control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=100000))
+)
+  #With random slopes
+p_mst_int_s <- glmer(
+  CountEvent ~ SessionNr*PlayType 
+  + (1+SessionNr|Participant),
+  family = poisson(link = "log"), 
+  filter(df, Term == "MST")
+)
+
+#If checking the random effect in 
+plot(ranef(p_mst_int))
+plot(ranef(p_mst_int_s))
+  #Reveals that the random slopes are not normally distributed
+
+
+#Calculating r squared
+#Null 
+p_mst_null <- glmer(
+  CountEvent ~ 1 
+  + (1|Participant),
+  family = poisson(link = "log"), 
+  filter(df, Term == "MST")
+)
+
+r.squaredGLMM(p_mst_int, nullfx = p_mst_null)
+```
+
+
+```{r interaction models}
+#GR 
+p_gr_int <- glmer(
+  CountEvent ~ SessionNr*PlayType 
+  + (1|Participant),
+  family = poisson(link = "log"), 
+  filter(df, Term == "GR")
+)
+  #With random slopes
+p_gr_int_s <- glmer(
+  CountEvent ~ SessionNr*PlayType 
+  + (1+ SessionNr|Participant),
+  family = poisson(link = "log"), 
+  filter(df, Term == "GR")
+)
+
+#If checking the random effect in 
+plot(ranef(p_gr_int))
+plot(ranef(p_gr_int_s))
+  #Reveals that the random slopes are not normally distributed
+
+#New code for checking randome slopes-> above code probably wrong
+slopes <- ranef(p_gr_int_s)$Participant$SessionNr
+qqnorm(slopes)
+
+#Calculating r squared
+#Null 
+p_gr_null <- glmer(
+  CountEvent ~ 1 
+  + (1|Participant),
+  family = poisson(link = "log"), 
+  filter(df, Term == "GR")
+)
+
+r.squaredGLMM(p_gr_int, nullfx = p_gr_null)
+```
+
+```{r Interpreting interactions }
+#Only using playtype gives the coefficient and the pairwise, gives the comparison of the slopes, and if they are significantly different from each other 
+#emtrends(p_id_full_int, ~ PlayType, var="SessionNr")
+
+#For full int model
+emtrends(p_full_int, pairwise ~ PlayType, var="SessionNr")
+  #I think this means that per increase of session number in samarbejde there is an increase in count events of 0.1162 
+  #And per increase in session number in spil there is a decrease of -0.0275
+  #And the slopes (looking at the contrast) are significantly different from each other
+
+#Collaboration
+exp(0.1236)
+#SE
+exp(0.0283)
+#Game
+exp(-0.0289)
+#SE
+exp(0.0266)
+
+#For mst int model
+emtrends(p_mst_int, pairwise ~ PlayType, var = "SessionNr")
+  #Increase per session nr in samarbejde 0.1497
+  #Increase per session nr in spil -0.0347
+    #Significantly different from each other
+    #Bigger difference, bigger standard error
+
+#Collaboration
+exp(0.145)
+#SE
+exp(0.0475)
+#Game
+exp(-0.0282)
+#SE
+exp(0.0359)
+
+#For gr int model
+emtrends(p_gr_int, pairwise ~ PlayType, var = "SessionNr")
+  #Increase per session nr in samarbejde 0.0928
+  #Increase per session nr in spil -0.0187
+    #Significantly different from each other
+
+#Collaboration
+exp(0.1102)
+#SE
+exp(0.0349)
+#Game
+exp(-0.0241)
+#SE
+exp(0.0389)
+```
+
+#Power analysis
+ 
+```{r simple }
+#Creating models to not mess up 
+simple1 <- glmer(
+  CountEvent ~ SessionNr + Term 
+  + (1|Participant),
+  family = poisson(link = "log"), 
+  df
+)
+
+#What is the effect size of the fixed effect?
+fixef(simple1)["SessionNr"]
+  # SessionNr effect size is 
+    #0.035
+
+#What effect size would we like
+fixef(simple1)["SessionNr"] <- 0.04
+
+#How much power of the current study 
+  #The power to reject the null hypothesis of zero trend in sessionNr is about ??%, given this particular setup with the same effect size as the current study.
+p_simple1 <- powerSim(simple1, nsim = 1000)
+  #Test can be set to pb 
+    #A power of 80% is sufficient 
+
+#Extending sample size of participants to figure out how many is needed for a sufficient power of effect size of 0.035
+simple2 <- extend(simple1, along = "Participant", n=50)
+
+#Finding the sweet spot of participants and power
+pc_simple2 <- powerCurve(simple2, along = "Participant", nsim = 200)
+
+#Numbers
+print(pc_simple2)
+#Plots
+plot(pc_simple2)
+
+#p_try <- powerCurve(model2, fixed("SessionNr"), along = "Participant", nsim = 10)
+```
+
+
+```{r full interaction }
+#Creating models to not mess up 
+fullint1 <- glmer(
+  CountEvent ~ SessionNr*PlayType + Term 
+  + (1|Participant),
+  family = poisson(link = "log"), 
+  df_sim
+)
+  #Poweranalyses the model failed to converge, try without random slopes (Helped, only 2 fittings introduce convergence problems)
+
+#What is the effect size of the fixed effect?
+fixef(fullint1)["SessionNr:PlayTypeSpil"]
+  # SessionNr effect size is 
+    #-0.12
+
+#What effect size would we like
+fixef(fullint1)["SessionNr:PlayTypeSpil"] <- -0.17
+
+#How much power of the current study 
+  #The power to reject the null hypothesis of zero trend in sessionNr is about, given this particular setup with the same effect size as the current study.
+p_fullint1 <- powerSim(fullint1, fixed("SessionNr:PlayTypeSpil"), nsim = 1000)
+    #A power of 80% is sufficient 
+```
+
+```{r mst interaction }
+#Creating models to not mess up 
+mstint1 <- glmer(
+  CountEvent ~ SessionNr*PlayType 
+  + (1|Participant),
+  family = poisson(link = "log"), 
+  filter(df_sim, Term=="MST"), 
+  control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=100000))
+)
+
+#What is the effect size of the fixed effect?
+fixef(mstint1)["SessionNr:PlayTypeSpil"]
+  # SessionNr effect size is 
+    #-0.13
+
+#What effect size would we like
+fixef(mstint1)["SessionNr:PlayTypeSpil"] <- -0.21
+
+#How much power of the current study 
+  #The power to reject the null hypothesis of zero trend in sessionNr is about ??, given this particular setup with the same effect size as the current study.
+p_mstint1 <- powerSim(mstint1, fixed("SessionNr:PlayTypeSpil"), nsim = 1000)
+  #Test can be set to pb 
+    #A power of 80% is sufficient 
+
+#Extending sample size of participants to figure out how many is needed for a sufficient power of effect size of 0.035
+mstint2 <- extend(mstint1, along = "Participant", n=40)
+
+#Finding the sweet spot of participants and power
+pc_mstint2 <- powerCurve(mstint2, fixed("SessionNr:PlayTypeSpil"), along = "Participant", nsim = 200)
+
+#Numbers
+print(pc_mstint2)
+#Plots
+plot(pc_mstint2)
+
+#p_try <- powerCurve(model2, fixed("SessionNr"), along = "Participant", nsim = 10)
+```
+
+```{r gr interaction }
+#Creating models to not mess up 
+grint1 <- glmer(
+  CountEvent ~ SessionNr*PlayType 
+  + (1|Participant),
+  family = poisson(link = "log"), 
+  filter(df_sim, Term=="GR"), 
+  control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=100000))
+)
+
+#What is the effect size of the fixed effect?
+fixef(grint1)["SessionNr:PlayTypeSpil"]
+  # SessionNr effect size is 
+    #-0.155
+
+#What effect size would we like
+fixef(grint1)["SessionNr:PlayTypeSpil"] <- -0.16
+
+#How much power of the current study 
+  #The power to reject the null hypothesis of zero trend in sessionNr is about 45%, given this particular setup with the same effect size as the current study.
+p_grint1 <- powerSim(grint1, fixed("SessionNr:PlayTypeSpil"), nsim = 1000)
+  #Test can be set to pb 
+    #A power of 80% is sufficient 
+
+#Extending sample size of participants to figure out how many is needed for a sufficient power of effect size of 0.035
+grint2 <- extend(grint1, along = "Participant", n=40)
+
+#Finding the sweet spot of participants and power
+pc_grint2 <- powerCurve(grint2, fixed("SessionNr:PlayTypeSpil"), along = "Participant", nsim = 200)
+
+#Numbers
+print(pc_grint2)
+#Plots
+plot(pc_grint2)
+
+#p_try <- powerCurve(model2, fixed("SessionNr"), along = "Participant", nsim = 10)
+```
+
+#Plots
+```{r simple plots}
+#Model plot ish
+df_plots_simple%>% ggplot(aes(SessionNr, CountEvent)) +
+  #geom_point(position = position_jitter(h=0.1, w= 0.1), aes(color = Participants)) + 
+  stat_smooth(geom = "line", alpha = 0.4, size = 0.75, se = FALSE, method = glm,
+              method.args = list(family = poisson(link = "log")), aes(color = Participants)) +
+  geom_smooth(method = glm,
+              method.args = list(family = poisson(link = "log")), color = "royalblue4")+ #Use either, coral, salmon, seagreen, firebrick4, royalblue4
+  #xlim(1.9,10.1)+
+  #ylim(-0.2, 8)+ 
+  ggtitle("Figure 3: Amount of counted events by session number in the collective dataset") + 
+  theme_classic()
+
+#MST
+filter(df_plots, Term == "MST")%>% ggplot(aes(SessionNr, CountEvent)) +
+  geom_point(position = position_jitter(h=0.1, w= 0.1), aes(color = Participants)) + 
+  geom_smooth(method = glm,
+              method.args = list(family = poisson(link = "log")), color = "royalblue4")+ #Use either, coral, salmon, seagreen, firebrick4, royalblue4
+  xlim(1.9,10.1)+
+  ylim(-0.2, 13.1)+ 
+  ggtitle("MST dataset") + 
+  theme_gdocs()
+
+#GR
+filter(df_plots, Term == "GR")%>% ggplot(aes(SessionNr, CountEvent)) +
+  geom_point(position = position_jitter(h=0.1, w= 0.1), aes(color = Participants)) + 
+  geom_smooth(method = glm,
+              method.args = list(family = poisson(link = "log")), color = "royalblue4")+ #Use either, coral, salmon, seagreen, firebrick4, royalblue4
+  xlim(1.9,10.1)+
+  ylim(-0.2, 13.1)+ 
+  ggtitle("MST dataset") + 
+  theme_gdocs()
+
+#Random slopes
+df_plots%>% ggplot(aes(SessionNr, CountEvent, color = Participants)) +
+  geom_point(position = position_jitter(h=0.1, w= 0.1), aes(color = Participants)) + 
+  geom_smooth(se = FALSE, method = glm,
+              method.args = list(family = poisson(link = "log")))+
+  xlim(1.9,10.1)+
+  ylim(-0.2, 13.1)+ 
+  ggtitle("Full dataset") + 
+  theme_gdocs()
+
+```
+
+```{r plots interaction}
+#Plot full interaction
+df_plots_interaction%>% ggplot(aes(SessionNr, CountEvent)) +
+  #geom_point(position = position_jitter(h=0.1, w= 0.1), aes(color = Participants)) + 
+  stat_smooth(geom = "line", alpha = 0.4, size = 0.75, se = FALSE, method = glm,
+              method.args = list(family = poisson(link = "log")), aes(color = Participants)) +
+  geom_smooth(method = glm,
+              method.args = list(family = poisson(link = "log")), color = "royalblue4")+ 
+  facet_wrap(. ~PlayType) + 
+  #xlim(1.9,10.1)+
+  #ylim(-0.2, 13.1)+ 
+  ggtitle("Figure 4a: Collective dataset") + 
+  theme_classic() + 
+  #theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+  theme(strip.background = element_blank())
+
+#Plot GR interaction
+filter(df_plots_interaction, Term == "GR") %>% ggplot(aes(SessionNr, CountEvent)) +
+  #geom_point(position = position_jitter(h=0.1, w= 0.1), aes(color = Participants)) + 
+  stat_smooth(geom = "line", alpha = 0.4, size = 0.75, se = FALSE, method = glm,
+              method.args = list(family = poisson(link = "log")), aes(color = Participants)) +
+  geom_smooth(method = glm,
+              method.args = list(family = poisson(link = "log")), color = "royalblue4")+ 
+  facet_wrap(. ~PlayType) + 
+  #xlim(1.9,10.1)+
+  #ylim(-0.2, 13.1)+ 
+  ggtitle("Figure 4b: We-talk") + 
+  theme_classic() + 
+  #theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+  theme(strip.background = element_blank())
+
+#Plot MST interaction
+filter(df_plots_interaction, Term == "MST") %>% ggplot(aes(SessionNr, CountEvent)) +
+  #geom_point(position = position_jitter(h=0.1, w= 0.1), aes(color = Participants)) + 
+  stat_smooth(geom = "line", alpha = 0.4, size = 0.75, se = FALSE, method = glm,
+              method.args = list(family = poisson(link = "log")), aes(color = Participants)) +
+  geom_smooth(method = glm,
+              method.args = list(family = poisson(link = "log")), color = "royalblue4")+ 
+  facet_wrap(. ~PlayType) + 
+  #xlim(1.9,10.1)+
+  #ylim(-0.2, 13.1)+ 
+  ggtitle("Figure 4c: Mental state talk") + 
+  theme_classic() + 
+  #theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+  theme(strip.background = element_blank())
+
+filter(df_plots, Term == "GR") %>% ggplot(aes(SessionNr, CountEvent)) +
+  geom_point(position = position_jitter(h=0.1, w= 0.1), aes(color = Participants)) + 
+  geom_smooth(method = glm,
+              method.args = list(family = poisson(link = "log")), color = "royalblue4")+ 
+  facet_wrap(. ~PlayType) + 
+  xlim(1.9,10.1)+
+  ylim(-0.2, 13.1)+ 
+  ggtitle("Group Responsibility") + 
+  theme_gdocs() 
+
+#Plot MST interaction
+filter(df_plots, Term == "MST") %>% ggplot(aes(SessionNr, CountEvent)) +
+  geom_point(position = position_jitter(h=0.1, w= 0.1), aes(color = Participants)) + 
+  geom_smooth(method = glm,
+              method.args = list(family = poisson(link = "log")), color = "royalblue4")+ 
+  facet_wrap(. ~PlayType) + 
+  xlim(1.9,10.1)+
+  ylim(-0.2, 10.1)+ 
+  ggtitle("Mental State Talk") + 
+  theme_gdocs() 
+
+```
